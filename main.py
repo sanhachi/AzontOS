@@ -21,9 +21,10 @@ class AzontOS(QtWidgets.QWidget):
         self.drawer_button_height = 180 
         self.drawer_button_y = 60
 
-        # --- 初期サイズを「右端のタスクバー分だけ」にする ---
+        # --- 初期配置：右端に固定 ---
         self.setGeometry(self.screen_width - self.taskbar_width, 0, self.taskbar_width, self.screen_height)
 
+        # WindowStaysOnTopHint ではなく、Dock属性を優先
         self.setWindowFlags(
             QtCore.Qt.FramelessWindowHint | 
             QtCore.Qt.WindowStaysOnTopHint |
@@ -32,18 +33,16 @@ class AzontOS(QtWidgets.QWidget):
         )
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
 
-        # --- 1. タスクバー本体 (親の左端、つまり画面の右端に配置) ---
+        # --- UIパーツ構築 ---
         self.taskbar = QtWidgets.QFrame(self)
         self.taskbar.setGeometry(0, 0, self.taskbar_width, self.height())
         self.taskbar.setStyleSheet(f"background-color: {self.panel_color}; border: none;")
 
-        # --- 2. 電源ボタン ---
         self.power_icon = QtWidgets.QPushButton(self.taskbar)
         self.power_icon.setGeometry(10, 10, 40, 40)
         self.power_icon.setStyleSheet(f"background-color: {self.accent_color}; border: none;")
         self.power_icon.clicked.connect(self.shutdown)
 
-        # --- 3. ドロワー展開ボタン ---
         self.drawer_button = QtWidgets.QPushButton("≡", self.taskbar)
         self.drawer_button.setGeometry(0, self.drawer_button_y, self.taskbar_width, self.drawer_button_height)
         self.drawer_button.setStyleSheet("""
@@ -52,8 +51,6 @@ class AzontOS(QtWidgets.QWidget):
         """)
         self.drawer_button.clicked.connect(self.toggle_drawer)
 
-        # --- 4. ドロワーパネル (最初は隠れている) ---
-        # self(QWidget)の左側に配置されるように調整
         self.drawer_panel = QtWidgets.QFrame(self)
         self.drawer_panel.setGeometry(0, self.drawer_button_y, 0, self.drawer_button_height)
         self.drawer_panel.setStyleSheet("background-color: rgba(20, 20, 20, 230); border: none;")
@@ -82,7 +79,33 @@ class AzontOS(QtWidgets.QWidget):
         layout.setContentsMargins(0,0,0,0)
         layout.addWidget(self.scroll)
 
+    def showEvent(self, event):
+        """ウィンドウが表示される瞬間に領域予約を実行"""
+        super().showEvent(event)
         self.reserve_taskbar_area()
+
+    def reserve_taskbar_area(self):
+        """Openboxに右端60pxを使わせないように命令する"""
+        try:
+            from Xlib import display, Xatom
+            d = display.Display()
+            window_id = int(self.winId())
+            window = d.create_resource_object('window', window_id)
+
+            # _NET_WM_WINDOW_TYPE_DOCK を設定
+            type_atom = d.intern_atom('_NET_WM_WINDOW_TYPE')
+            dock_atom = d.intern_atom('_NET_WM_WINDOW_TYPE_DOCK')
+            window.change_property(type_atom, Xatom.ATOM, 32, [dock_atom])
+
+            # _NET_WM_STRUT_PARTIAL (左, 右, 上, 下, ...) 
+            # [0, 60, 0, 0, 0, 0, 0, screen_height, 0, 0, 0, 0]
+            struts = [0, self.taskbar_width, 0, 0, 0, 0, 0, self.screen_height, 0, 0, 0, 0]
+            strut_atom = d.intern_atom('_NET_WM_STRUT_PARTIAL')
+            window.change_property(strut_atom, Xatom.CARDINAL, 32, struts)
+            
+            d.sync()
+        except Exception as e:
+            print(f"Strut error: {e}")
 
     def eventFilter(self, source, event):
         if source == self.scroll and event.type() == QtCore.QEvent.Wheel:
@@ -91,18 +114,6 @@ class AzontOS(QtWidgets.QWidget):
             hbar.setValue(hbar.value() - delta)
             return True
         return super().eventFilter(source, event)
-
-    def reserve_taskbar_area(self):
-        try:
-            from Xlib import display, Xatom
-            d = display.Display()
-            window_id = int(self.winId())
-            window = d.create_resource_object('window', window_id)
-            struts = [0, self.taskbar_width, 0, 0, 0, 0, 0, self.screen_height, 0, 0, 0, 0]
-            strut_atom = d.intern_atom('_NET_WM_STRUT_PARTIAL')
-            window.change_property(strut_atom, Xatom.CARDINAL, 32, struts)
-            d.sync()
-        except: pass
 
     def get_apps(self):
         apps = []
@@ -157,12 +168,10 @@ class AzontOS(QtWidgets.QWidget):
 
     def toggle_drawer(self):
         is_open = self.width() > self.taskbar_width
-        # ドロワーが開く時はウィンドウを横に広げる
         target_drawer_width = self.screen_width - self.taskbar_width - 100 if not is_open else 0
         total_width = self.taskbar_width + target_drawer_width
 
         if not is_open:
-            # 開く前にウィンドウ枠を広げる
             self.setGeometry(self.screen_width - total_width, 0, total_width, self.screen_height)
             self.taskbar.move(total_width - self.taskbar_width, 0)
 
@@ -172,7 +181,6 @@ class AzontOS(QtWidgets.QWidget):
         self.animation.setEasingCurve(QtCore.QEasingCurve.OutCubic)
         
         if is_open:
-            # 閉じた後にウィンドウ枠を戻す
             self.animation.finished.connect(lambda: self.setGeometry(self.screen_width - self.taskbar_width, 0, self.taskbar_width, self.screen_height))
             self.animation.finished.connect(lambda: self.taskbar.move(0, 0))
             
