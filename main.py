@@ -13,7 +13,6 @@ class AzontOS(QtWidgets.QWidget):
         screen = QtWidgets.QApplication.primaryScreen().geometry()
         self.screen_width = screen.width()
         self.screen_height = screen.height()
-        self.setFixedSize(self.screen_width, self.screen_height)
         
         # 設定値
         self.taskbar_width = 60
@@ -22,49 +21,43 @@ class AzontOS(QtWidgets.QWidget):
         self.drawer_button_height = 180 
         self.drawer_button_y = 60
 
-        # --- ウィンドウ属性の設定 ---
+        # --- 初期サイズを「右端のタスクバー分だけ」にする ---
+        self.setGeometry(self.screen_width - self.taskbar_width, 0, self.taskbar_width, self.screen_height)
+
         self.setWindowFlags(
             QtCore.Qt.FramelessWindowHint | 
+            QtCore.Qt.WindowStaysOnTopHint |
+            QtCore.Qt.Tool |
             QtCore.Qt.X11BypassWindowManagerHint
         )
-        self.setAttribute(QtCore.Qt.WA_TranslucentBackground) # 背景透過
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
 
-        # --- 0. 背景 (透過) ---
-        self.wallpaper_label = QtWidgets.QLabel(self)
-        self.wallpaper_label.setGeometry(0, 0, self.width(), self.height())
-        self.wallpaper_label.setStyleSheet("background: transparent;")
-
-        # --- 1. タスクバー本体 ---
+        # --- 1. タスクバー本体 (親の左端、つまり画面の右端に配置) ---
         self.taskbar = QtWidgets.QFrame(self)
-        self.taskbar.setGeometry(self.width() - self.taskbar_width, 0, self.taskbar_width, self.height())
+        self.taskbar.setGeometry(0, 0, self.taskbar_width, self.height())
         self.taskbar.setStyleSheet(f"background-color: {self.panel_color}; border: none;")
 
         # --- 2. 電源ボタン ---
-        self.power_icon = QtWidgets.QPushButton(self)
-        self.power_icon.setGeometry(self.width() - self.taskbar_width + 10, 10, 40, 40)
+        self.power_icon = QtWidgets.QPushButton(self.taskbar)
+        self.power_icon.setGeometry(10, 10, 40, 40)
         self.power_icon.setStyleSheet(f"background-color: {self.accent_color}; border: none;")
         self.power_icon.clicked.connect(self.shutdown)
 
         # --- 3. ドロワー展開ボタン ---
-        self.drawer_button = QtWidgets.QPushButton("≡", self)
-        self.drawer_button.setGeometry(self.width() - self.taskbar_width, self.drawer_button_y, self.taskbar_width, self.drawer_button_height)
+        self.drawer_button = QtWidgets.QPushButton("≡", self.taskbar)
+        self.drawer_button.setGeometry(0, self.drawer_button_y, self.taskbar_width, self.drawer_button_height)
         self.drawer_button.setStyleSheet("""
-            QPushButton { 
-                background-color: transparent; 
-                color: white; 
-                border: none; 
-                font-size: 24px; 
-            } 
+            QPushButton { background-color: transparent; color: white; border: none; font-size: 24px; } 
             QPushButton:hover { background-color: rgba(255,255,255,30); }
         """)
         self.drawer_button.clicked.connect(self.toggle_drawer)
 
-        # --- 4. ドロワーパネル ---
+        # --- 4. ドロワーパネル (最初は隠れている) ---
+        # self(QWidget)の左側に配置されるように調整
         self.drawer_panel = QtWidgets.QFrame(self)
-        self.drawer_panel.setGeometry(self.width() - self.taskbar_width, self.drawer_button_y, 0, self.drawer_button_height)
+        self.drawer_panel.setGeometry(0, self.drawer_button_y, 0, self.drawer_button_height)
         self.drawer_panel.setStyleSheet("background-color: rgba(20, 20, 20, 230); border: none;")
         
-        # スクロールエリアの設定
         self.scroll = QtWidgets.QScrollArea(self.drawer_panel)
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
@@ -72,18 +65,14 @@ class AzontOS(QtWidgets.QWidget):
         self.scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.scroll.setStyleSheet("background: transparent;")
 
-        # スクロールエリアの中身
         self.scroll_content = QtWidgets.QWidget()
         self.scroll_content.setStyleSheet("background: transparent;")
         self.drawer_layout = QtWidgets.QHBoxLayout(self.scroll_content)
         self.drawer_layout.setContentsMargins(20, 10, 20, 10)
         self.drawer_layout.setSpacing(25) 
         self.scroll.setWidget(self.scroll_content)
-
-        # マウスホイールで横スクロールさせるためのイベントフィルタを登録
         self.scroll.installEventFilter(self)
 
-        # アプリ読み込み
         self.apps = self.get_apps()
         self.favorites = self.apps[:3] if self.apps else []
         self.populate_drawer()
@@ -93,36 +82,27 @@ class AzontOS(QtWidgets.QWidget):
         layout.setContentsMargins(0,0,0,0)
         layout.addWidget(self.scroll)
 
-        # 起動時に領域予約を実行
         self.reserve_taskbar_area()
 
     def eventFilter(self, source, event):
-        """マウスホイールの上下を横スクロールに変換する"""
         if source == self.scroll and event.type() == QtCore.QEvent.Wheel:
-            # 横スクロールバーの値をホイール量に合わせて増減させる
             delta = event.angleDelta().y()
-            current_val = self.scroll.horizontalScrollBar().value()
-            self.scroll.horizontalScrollBar().setValue(current_val - delta)
+            hbar = self.scroll.horizontalScrollBar()
+            hbar.setValue(hbar.value() - delta)
             return True
         return super().eventFilter(source, event)
 
     def reserve_taskbar_area(self):
-        """Openboxに対して右側のタスクバー領域を予約する"""
         try:
             from Xlib import display, Xatom
             d = display.Display()
-            root = d.screen().root
-            window_id = self.winId().__int__()
+            window_id = int(self.winId())
             window = d.create_resource_object('window', window_id)
-            struts = [0, self.taskbar_width, 0, 0]
-            strut_atom = d.intern_atom('_NET_WM_STRUT')
+            struts = [0, self.taskbar_width, 0, 0, 0, 0, 0, self.screen_height, 0, 0, 0, 0]
+            strut_atom = d.intern_atom('_NET_WM_STRUT_PARTIAL')
             window.change_property(strut_atom, Xatom.CARDINAL, 32, struts)
-            strut_partial_atom = d.intern_atom('_NET_WM_STRUT_PARTIAL')
-            struts_partial = [0, self.taskbar_width, 0, 0, 0, 0, 0, self.screen_height, 0, 0, 0, 0]
-            window.change_property(strut_partial_atom, Xatom.CARDINAL, 32, struts_partial)
             d.sync()
-        except:
-            pass
+        except: pass
 
     def get_apps(self):
         apps = []
@@ -142,64 +122,67 @@ class AzontOS(QtWidgets.QWidget):
         return sorted(apps, key=lambda x: x['name'].lower())
 
     def populate_drawer(self):
-        # 一旦中身を空にする（再描画用）
-        for i in reversed(range(self.drawer_layout.count())): 
-            self.drawer_layout.itemAt(i).widget().setParent(None)
-
         for app in self.apps:
             container = QtWidgets.QWidget()
             v_layout = QtWidgets.QVBoxLayout(container)
             v_layout.setContentsMargins(0, 0, 0, 0)
             v_layout.setSpacing(8)
-            
             btn = QtWidgets.QToolButton()
             btn.setFixedSize(120, 120)
             icon = QtGui.QIcon.fromTheme(app["icon"])
-            if icon.isNull():
-                btn.setText(app["name"][0])
+            if icon.isNull(): btn.setText(app["name"][0])
             else:
                 btn.setIcon(icon)
                 btn.setIconSize(QtCore.QSize(64, 64))
-            
             btn.setStyleSheet(f"background-color: {self.accent_color}; border: none; color: white; font-size: 40px;")
             btn.clicked.connect(lambda _, a=app["exec"]: self.launch_app(a))
-            
             label = QtWidgets.QLabel(app["name"])
             label.setFixedWidth(120)
             label.setWordWrap(True)
             label.setAlignment(QtCore.Qt.AlignCenter)
             label.setStyleSheet("color: white; font-size: 11px; font-weight: bold; border: none;")
-            
             v_layout.addWidget(btn)
             v_layout.addWidget(label)
             self.drawer_layout.addWidget(container)
-        
-        # 重要：中身のサイズをレイアウトに合わせる
         self.scroll_content.setMinimumWidth(len(self.apps) * 150)
 
     def populate_taskbar(self):
         y = 260
         for app in self.favorites:
-            btn = QtWidgets.QPushButton(self)
-            btn.setGeometry(self.width() - self.taskbar_width + 10, y, 40, 40)
+            btn = QtWidgets.QPushButton(self.taskbar)
+            btn.setGeometry(10, y, 40, 40)
             btn.setStyleSheet("background-color: rgba(255,255,255,15); border: none;")
             btn.clicked.connect(lambda _, a=app["exec"]: self.launch_app(a))
             y += 50
 
     def toggle_drawer(self):
-        is_open = self.drawer_panel.width() > 0
-        target_width = self.width() - self.taskbar_width - 100 if not is_open else 0
+        is_open = self.width() > self.taskbar_width
+        # ドロワーが開く時はウィンドウを横に広げる
+        target_drawer_width = self.screen_width - self.taskbar_width - 100 if not is_open else 0
+        total_width = self.taskbar_width + target_drawer_width
+
+        if not is_open:
+            # 開く前にウィンドウ枠を広げる
+            self.setGeometry(self.screen_width - total_width, 0, total_width, self.screen_height)
+            self.taskbar.move(total_width - self.taskbar_width, 0)
+
         self.animation = QtCore.QPropertyAnimation(self.drawer_panel, b"geometry")
         self.animation.setDuration(300)
-        self.animation.setEndValue(QtCore.QRect(
-            self.width() - self.taskbar_width - target_width, self.drawer_button_y, target_width, self.drawer_button_height
-        ))
+        self.animation.setEndValue(QtCore.QRect(0, self.drawer_button_y, target_drawer_width, self.drawer_button_height))
         self.animation.setEasingCurve(QtCore.QEasingCurve.OutCubic)
+        
+        if is_open:
+            # 閉じた後にウィンドウ枠を戻す
+            self.animation.finished.connect(lambda: self.setGeometry(self.screen_width - self.taskbar_width, 0, self.taskbar_width, self.screen_height))
+            self.animation.finished.connect(lambda: self.taskbar.move(0, 0))
+            
         self.animation.start()
 
     def launch_app(self, cmd):
         try:
             subprocess.Popen(cmd.split())
+            if self.width() > self.taskbar_width:
+                self.toggle_drawer()
         except: pass
 
     def shutdown(self):
