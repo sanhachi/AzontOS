@@ -21,14 +21,14 @@ class AzontOS(QtWidgets.QWidget):
         self.drawer_button_height = 180 
         self.drawer_button_y = 60
 
-        # 初期配置
+        # 初期配置：右端
         self.setGeometry(self.screen_width - self.taskbar_width, 0, self.taskbar_width, self.screen_height)
 
-        # 属性：Dock属性を最優先にする
+        # Bypassフラグを削除し、Dockとして登録する
         self.setWindowFlags(
             QtCore.Qt.FramelessWindowHint | 
             QtCore.Qt.WindowStaysOnTopHint |
-            QtCore.Qt.X11BypassWindowManagerHint
+            QtCore.Qt.SubWindow # これを入れることで他のウィンドウに干渉しにくくなる
         )
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
 
@@ -80,30 +80,29 @@ class AzontOS(QtWidgets.QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        # ウィンドウが表示された直後に予約を送り、Openboxを強制更新させる
+        # ウィンドウが表示された後に領域予約を適用
         self.reserve_taskbar_area()
 
     def reserve_taskbar_area(self):
-        """Xlibを使用して、Openboxに領域予約を強制する"""
+        """Openboxに対して強力に領域予約を通知する"""
         try:
             from Xlib import display, Xatom
             d = display.Display()
-            root = d.screen().root
             window_id = int(self.winId())
             window = d.create_resource_object('window', window_id)
 
-            # _NET_WM_WINDOW_TYPE_DOCK (これが無いと最大化で無視される)
+            # 1. Dock属性をセット
             type_atom = d.intern_atom('_NET_WM_WINDOW_TYPE')
             dock_atom = d.intern_atom('_NET_WM_WINDOW_TYPE_DOCK')
             window.change_property(type_atom, Xatom.ATOM, 32, [dock_atom])
 
-            # _NET_WM_STRUT_PARTIAL (右端 60px を予約)
+            # 2. Strut (領域予約) をセット
+            # [left, right, top, bottom, L_start, L_end, R_start, R_end, ...]
             strut_partial_atom = d.intern_atom('_NET_WM_STRUT_PARTIAL')
-            # 12個の数値: [L, R, T, B, L_start, L_end, R_start, R_end, T_start, T_end, B_start, B_end]
             struts = [0, self.taskbar_width, 0, 0, 0, 0, 0, self.screen_height, 0, 0, 0, 0]
             window.change_property(strut_partial_atom, Xatom.CARDINAL, 32, struts)
 
-            # _NET_WM_STRUT (旧式マネージャ用)
+            # 3. 古いマネージャ用のStrutもセット
             strut_atom = d.intern_atom('_NET_WM_STRUT')
             window.change_property(strut_atom, Xatom.CARDINAL, 32, struts[:4])
 
@@ -150,7 +149,9 @@ class AzontOS(QtWidgets.QWidget):
                 btn.setIcon(icon)
                 btn.setIconSize(QtCore.QSize(64, 64))
             btn.setStyleSheet(f"background-color: {self.accent_color}; border: none; color: white; font-size: 40px;")
+            # アプリ起動時にドロワーを閉じるように変更
             btn.clicked.connect(lambda _, a=app["exec"]: self.launch_app(a))
+            
             label = QtWidgets.QLabel(app["name"])
             label.setFixedWidth(120)
             label.setWordWrap(True)
@@ -193,6 +194,7 @@ class AzontOS(QtWidgets.QWidget):
     def launch_app(self, cmd):
         try:
             subprocess.Popen(cmd.split())
+            # ドロワーが開いていたら閉じる
             if self.width() > self.taskbar_width:
                 self.toggle_drawer()
         except: pass
@@ -204,6 +206,6 @@ if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
     dm = AzontOS()
     dm.show()
-    # 起動直後に念押しで再実行
-    QtCore.QTimer.singleShot(500, dm.reserve_taskbar_area)
+    # 起動後にタイミングをずらして再予約
+    QtCore.QTimer.singleShot(1000, dm.reserve_taskbar_area)
     sys.exit(app.exec_())
