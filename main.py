@@ -19,29 +19,42 @@ class AzontOS(QtWidgets.QWidget):
         self.panel_color = "rgba(30, 30, 30, 220)"
         self.accent_color = "#C30976"
         self.drawer_button_height = 180 
-        self.drawer_button_y = 60
+        self.drawer_button_y = 120 # 時計のために少し下げる
 
-        # 初期配置：右端
+        # 初期配置
         self.setGeometry(self.screen_width - self.taskbar_width, 0, self.taskbar_width, self.screen_height)
 
-        # Bypassフラグを削除し、Dockとして登録する
+        # ウィンドウ属性
         self.setWindowFlags(
             QtCore.Qt.FramelessWindowHint | 
             QtCore.Qt.WindowStaysOnTopHint |
-            QtCore.Qt.SubWindow # これを入れることで他のウィンドウに干渉しにくくなる
+            QtCore.Qt.SubWindow
         )
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
 
-        # --- UIパーツ ---
+        # --- 1. タスクバー本体 ---
         self.taskbar = QtWidgets.QFrame(self)
         self.taskbar.setGeometry(0, 0, self.taskbar_width, self.height())
         self.taskbar.setStyleSheet(f"background-color: {self.panel_color}; border: none;")
 
-        self.power_icon = QtWidgets.QPushButton(self.taskbar)
-        self.power_icon.setGeometry(10, 10, 40, 40)
-        self.power_icon.setStyleSheet(f"background-color: {self.accent_color}; border: none;")
+        # --- 2. 時計 (New!) ---
+        self.clock_label = QtWidgets.QLabel(self.taskbar)
+        self.clock_label.setGeometry(0, 10, self.taskbar_width, 60)
+        self.clock_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.clock_label.setStyleSheet("color: white; font-size: 14px; font-weight: bold;")
+        
+        self.timer = QtCore.QTimer(self)
+        self.timer.timeout.connect(self.update_clock)
+        self.timer.start(1000)
+        self.update_clock()
+
+        # --- 3. 電源ボタン ---
+        self.power_icon = QtWidgets.QPushButton("⏻", self.taskbar)
+        self.power_icon.setGeometry(10, 75, 40, 40)
+        self.power_icon.setStyleSheet(f"background-color: {self.accent_color}; border-radius: 20px; color: white; font-size: 20px;")
         self.power_icon.clicked.connect(self.shutdown)
 
+        # --- 4. ドロワー展開ボタン ---
         self.drawer_button = QtWidgets.QPushButton("≡", self.taskbar)
         self.drawer_button.setGeometry(0, self.drawer_button_y, self.taskbar_width, self.drawer_button_height)
         self.drawer_button.setStyleSheet("""
@@ -50,9 +63,10 @@ class AzontOS(QtWidgets.QWidget):
         """)
         self.drawer_button.clicked.connect(self.toggle_drawer)
 
+        # --- 5. ドロワーパネル ---
         self.drawer_panel = QtWidgets.QFrame(self)
         self.drawer_panel.setGeometry(0, self.drawer_button_y, 0, self.drawer_button_height)
-        self.drawer_panel.setStyleSheet("background-color: rgba(20, 20, 20, 230); border: none;")
+        self.drawer_panel.setStyleSheet("background-color: rgba(20, 20, 20, 245); border-left: 2px solid #C30976;")
         
         self.scroll = QtWidgets.QScrollArea(self.drawer_panel)
         self.scroll.setWidgetResizable(True)
@@ -62,15 +76,21 @@ class AzontOS(QtWidgets.QWidget):
         self.scroll.setStyleSheet("background: transparent;")
 
         self.scroll_content = QtWidgets.QWidget()
-        self.scroll_content.setStyleSheet("background: transparent;")
         self.drawer_layout = QtWidgets.QHBoxLayout(self.scroll_content)
         self.drawer_layout.setContentsMargins(20, 10, 20, 10)
         self.drawer_layout.setSpacing(25) 
         self.scroll.setWidget(self.scroll_content)
         self.scroll.installEventFilter(self)
 
+        # アプリ読み込みと固定アプリの設定
         self.apps = self.get_apps()
-        self.favorites = self.apps[:3] if self.apps else []
+        # AzontOS標準として持っておきたいアプリを優先
+        self.favorites = [
+            {"name": "Settings", "exec": "xfce4-settings-manager", "icon": "preferences-system"},
+            {"name": "Terminal", "exec": "x-terminal-emulator", "icon": "utilities-terminal"},
+            {"name": "Files", "exec": "thunar", "icon": "system-file-manager"}
+        ]
+        
         self.populate_drawer()
         self.populate_taskbar()
 
@@ -78,37 +98,29 @@ class AzontOS(QtWidgets.QWidget):
         layout.setContentsMargins(0,0,0,0)
         layout.addWidget(self.scroll)
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        # ウィンドウが表示された後に領域予約を適用
-        self.reserve_taskbar_area()
+    def update_clock(self):
+        """時計の更新 (時・分を縦に並べる)"""
+        now = QtCore.QTime.currentTime()
+        self.clock_label.setText(now.toString("HH\nmm"))
 
     def reserve_taskbar_area(self):
-        """Openboxに対して強力に領域予約を通知する"""
         try:
             from Xlib import display, Xatom
             d = display.Display()
             window_id = int(self.winId())
             window = d.create_resource_object('window', window_id)
-
-            # 1. Dock属性をセット
             type_atom = d.intern_atom('_NET_WM_WINDOW_TYPE')
             dock_atom = d.intern_atom('_NET_WM_WINDOW_TYPE_DOCK')
             window.change_property(type_atom, Xatom.ATOM, 32, [dock_atom])
-
-            # 2. Strut (領域予約) をセット
-            # [left, right, top, bottom, L_start, L_end, R_start, R_end, ...]
             strut_partial_atom = d.intern_atom('_NET_WM_STRUT_PARTIAL')
             struts = [0, self.taskbar_width, 0, 0, 0, 0, 0, self.screen_height, 0, 0, 0, 0]
             window.change_property(strut_partial_atom, Xatom.CARDINAL, 32, struts)
-
-            # 3. 古いマネージャ用のStrutもセット
-            strut_atom = d.intern_atom('_NET_WM_STRUT')
-            window.change_property(strut_atom, Xatom.CARDINAL, 32, struts[:4])
-
             d.sync()
-        except Exception as e:
-            print(f"Reserve Error: {e}")
+        except: pass
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.reserve_taskbar_area()
 
     def eventFilter(self, source, event):
         if source == self.scroll and event.type() == QtCore.QEvent.Wheel:
@@ -140,7 +152,6 @@ class AzontOS(QtWidgets.QWidget):
             container = QtWidgets.QWidget()
             v_layout = QtWidgets.QVBoxLayout(container)
             v_layout.setContentsMargins(0, 0, 0, 0)
-            v_layout.setSpacing(8)
             btn = QtWidgets.QToolButton()
             btn.setFixedSize(120, 120)
             icon = QtGui.QIcon.fromTheme(app["icon"])
@@ -148,26 +159,27 @@ class AzontOS(QtWidgets.QWidget):
             else:
                 btn.setIcon(icon)
                 btn.setIconSize(QtCore.QSize(64, 64))
-            btn.setStyleSheet(f"background-color: {self.accent_color}; border: none; color: white; font-size: 40px;")
-            # アプリ起動時にドロワーを閉じるように変更
+            btn.setStyleSheet(f"background-color: {self.accent_color}; border: none; color: white;")
             btn.clicked.connect(lambda _, a=app["exec"]: self.launch_app(a))
-            
             label = QtWidgets.QLabel(app["name"])
             label.setFixedWidth(120)
             label.setWordWrap(True)
             label.setAlignment(QtCore.Qt.AlignCenter)
-            label.setStyleSheet("color: white; font-size: 11px; font-weight: bold; border: none;")
+            label.setStyleSheet("color: white; font-size: 11px; font-weight: bold;")
             v_layout.addWidget(btn)
             v_layout.addWidget(label)
             self.drawer_layout.addWidget(container)
         self.scroll_content.setMinimumWidth(len(self.apps) * 150)
 
     def populate_taskbar(self):
-        y = 260
+        y = 310 # ドロワーボタンの下から開始
         for app in self.favorites:
             btn = QtWidgets.QPushButton(self.taskbar)
             btn.setGeometry(10, y, 40, 40)
-            btn.setStyleSheet("background-color: rgba(255,255,255,15); border: none;")
+            icon = QtGui.QIcon.fromTheme(app["icon"])
+            btn.setIcon(icon)
+            btn.setIconSize(QtCore.QSize(24, 24))
+            btn.setStyleSheet("background-color: rgba(255,255,255,10); border: none; border-radius: 5px;")
             btn.clicked.connect(lambda _, a=app["exec"]: self.launch_app(a))
             y += 50
 
@@ -188,24 +200,21 @@ class AzontOS(QtWidgets.QWidget):
         if is_open:
             self.animation.finished.connect(lambda: self.setGeometry(self.screen_width - self.taskbar_width, 0, self.taskbar_width, self.screen_height))
             self.animation.finished.connect(lambda: self.taskbar.move(0, 0))
-            
         self.animation.start()
 
     def launch_app(self, cmd):
         try:
             subprocess.Popen(cmd.split())
-            # ドロワーが開いていたら閉じる
-            if self.width() > self.taskbar_width:
-                self.toggle_drawer()
+            if self.width() > self.taskbar_width: self.toggle_drawer()
         except: pass
 
     def shutdown(self):
+        # 終了確認ダイアログなどを出すのが理想的
         QtWidgets.QApplication.quit()
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
     dm = AzontOS()
     dm.show()
-    # 起動後にタイミングをずらして再予約
     QtCore.QTimer.singleShot(1000, dm.reserve_taskbar_area)
     sys.exit(app.exec_())
