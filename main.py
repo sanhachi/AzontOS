@@ -137,7 +137,7 @@ def populate_drawer(self):
             
             v_layout.addWidget(btn)
             v_layout.addWidget(label)
-            self.drawer_layout.addWidget(container))
+            self.drawer_layout.addWidget(container)
             # populate_drawerの最後にこれを追加
             self.scroll_content.adjustSize()
 
@@ -183,4 +183,5 @@ if __name__ == "__main__":
     dm.show()
 
     sys.exit(app.exec_())
+
 
