@@ -13,12 +13,15 @@ class AzontOS(QtWidgets.QWidget):
         screen = QtWidgets.QApplication.primaryScreen().geometry()
         self.setFixedSize(screen.width(), screen.height())
         
-        # フレームレス・最前面・デスクトップ層に固定
+        # --- 透明化と最前面設定 ---
+        # WindowTransparentForInputを付けるとクリックが背後に抜けますが、
+        # 今回はタスクバーなどはクリックしたいので、全体の透明化のみ設定します。
         self.setWindowFlags(
             QtCore.Qt.FramelessWindowHint | 
             QtCore.Qt.WindowStaysOnTopHint |
-            QtCore.Qt.SubWindow
+            QtCore.Qt.X11BypassWindowManagerHint # WMの管理をバイパスして透明度を安定させる
         )
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground) # 背景透過
 
         # 設定値
         self.taskbar_width = 60
@@ -27,10 +30,10 @@ class AzontOS(QtWidgets.QWidget):
         self.drawer_button_height = 180 
         self.drawer_button_y = 60
 
-        # --- 0. 背景 ---
+        # --- 0. 背景 (透明にするので、中身は空に) ---
         self.wallpaper_label = QtWidgets.QLabel(self)
         self.wallpaper_label.setGeometry(0, 0, self.width(), self.height())
-        self.setup_wallpaper()
+        self.wallpaper_label.setStyleSheet("background: transparent;")
 
         # --- 1. タスクバー本体 ---
         self.taskbar = QtWidgets.QFrame(self)
@@ -72,7 +75,7 @@ class AzontOS(QtWidgets.QWidget):
         self.scroll_content = QtWidgets.QWidget()
         self.drawer_layout = QtWidgets.QHBoxLayout(self.scroll_content)
         self.drawer_layout.setContentsMargins(20, 10, 20, 10)
-        self.drawer_layout.setSpacing(20) # 間隔を少し広めに
+        self.drawer_layout.setSpacing(25) 
         self.scroll.setWidget(self.scroll_content)
 
         # アプリ読み込み
@@ -84,9 +87,6 @@ class AzontOS(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self.drawer_panel)
         layout.setContentsMargins(0,0,0,0)
         layout.addWidget(self.scroll)
-
-    def setup_wallpaper(self):
-        self.wallpaper_label.setStyleSheet("background-color: #000000;")
 
     def get_apps(self):
         apps = []
@@ -102,25 +102,20 @@ class AzontOS(QtWidgets.QWidget):
                             elif line.startswith("Icon="): icon = line.strip().split("=", 1)[1]
                         if name and exec_cmd:
                             apps.append({"name": name, "exec": exec_cmd, "icon": icon})
-                except:
-                    pass
+                except: pass
         return sorted(apps, key=lambda x: x['name'].lower())
 
     def populate_drawer(self):
-        """アプリタイルの生成 (アイコン画像 + 枠外ラベル)"""
         for app in self.apps:
             container = QtWidgets.QWidget()
             v_layout = QtWidgets.QVBoxLayout(container)
             v_layout.setContentsMargins(0, 0, 0, 0)
-            v_layout.setSpacing(5)
+            v_layout.setSpacing(8)
             
-            # アイコン部分 (正方形タイル)
             btn = QtWidgets.QToolButton()
             btn.setFixedSize(120, 120)
-            
-            # システムアイコンテーマから取得
             icon = QtGui.QIcon.fromTheme(app["icon"])
-            if icon.isNull(): # アイコンがない場合のフォールバック
+            if icon.isNull():
                 btn.setText(app["name"][0])
             else:
                 btn.setIcon(icon)
@@ -129,17 +124,17 @@ class AzontOS(QtWidgets.QWidget):
             btn.setStyleSheet(f"background-color: {self.accent_color}; border: none; color: white; font-size: 40px;")
             btn.clicked.connect(lambda _, a=app["exec"]: self.launch_app(a))
             
-            # ラベル部分 (タイルの下)
             label = QtWidgets.QLabel(app["name"])
             label.setFixedWidth(120)
+            label.setWordWrap(True) # 折り返し有効
             label.setAlignment(QtCore.Qt.AlignCenter)
-            label.setStyleSheet("color: white; font-size: 11px; border: none;")
+            # 文字サイズを12pxに上げ、太字に
+            label.setStyleSheet("color: white; font-size: 12px; font-weight: bold; border: none;")
             
             v_layout.addWidget(btn)
             v_layout.addWidget(label)
             self.drawer_layout.addWidget(container)
         
-        # すべて追加した後にサイズを確定させる
         self.scroll_content.adjustSize()
 
     def populate_taskbar(self):
@@ -158,10 +153,7 @@ class AzontOS(QtWidgets.QWidget):
         self.animation.setDuration(300)
         self.animation.setStartValue(self.drawer_panel.geometry())
         self.animation.setEndValue(QtCore.QRect(
-            self.width() - self.taskbar_width - target_width,
-            self.drawer_button_y,
-            target_width,
-            self.drawer_button_height
+            self.width() - self.taskbar_width - target_width, self.drawer_button_y, target_width, self.drawer_button_height
         ))
         self.animation.setEasingCurve(QtCore.QEasingCurve.OutCubic)
         self.animation.start()
@@ -169,17 +161,24 @@ class AzontOS(QtWidgets.QWidget):
     def launch_app(self, cmd):
         try:
             subprocess.Popen(cmd.split())
-        except:
-            pass
+            # アプリを起動したらドロワーを閉じる
+            if self.drawer_panel.width() > 0:
+                self.toggle_drawer()
+            # 背後に送る
+            self.lower()
+        except: pass
+
+    def mousePressEvent(self, event):
+        # 透明な部分（壁紙部分）を右クリックしたらOpenboxにイベントを渡す
+        # ただし、タスクバー以外の場所を左クリックした時はAzontOSを前面に持ってくる
+        if event.button() == QtCore.Qt.LeftButton:
+            self.raise_()
 
     def shutdown(self):
-        # 開発中のためアプリ終了。本番は subprocess.Popen(["sudo", "poweroff"]) など
         QtWidgets.QApplication.quit()
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
-    # アイコンテーマを確実に読み込むための設定
-    app.setWindowIcon(QtGui.QIcon.fromTheme("system-run"))
     dm = AzontOS()
     dm.show()
     sys.exit(app.exec_())
