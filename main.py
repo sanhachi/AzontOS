@@ -21,19 +21,18 @@ class AzontOS(QtWidgets.QWidget):
         self.drawer_button_height = 180 
         self.drawer_button_y = 60
 
-        # --- 初期配置：右端に固定 ---
+        # 初期配置
         self.setGeometry(self.screen_width - self.taskbar_width, 0, self.taskbar_width, self.screen_height)
 
-        # WindowStaysOnTopHint ではなく、Dock属性を優先
+        # 属性：Dock属性を最優先にする
         self.setWindowFlags(
             QtCore.Qt.FramelessWindowHint | 
             QtCore.Qt.WindowStaysOnTopHint |
-            QtCore.Qt.Tool |
             QtCore.Qt.X11BypassWindowManagerHint
         )
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
 
-        # --- UIパーツ構築 ---
+        # --- UIパーツ ---
         self.taskbar = QtWidgets.QFrame(self)
         self.taskbar.setGeometry(0, 0, self.taskbar_width, self.height())
         self.taskbar.setStyleSheet(f"background-color: {self.panel_color}; border: none;")
@@ -80,32 +79,37 @@ class AzontOS(QtWidgets.QWidget):
         layout.addWidget(self.scroll)
 
     def showEvent(self, event):
-        """ウィンドウが表示される瞬間に領域予約を実行"""
         super().showEvent(event)
+        # ウィンドウが表示された直後に予約を送り、Openboxを強制更新させる
         self.reserve_taskbar_area()
 
     def reserve_taskbar_area(self):
-        """Openboxに右端60pxを使わせないように命令する"""
+        """Xlibを使用して、Openboxに領域予約を強制する"""
         try:
             from Xlib import display, Xatom
             d = display.Display()
+            root = d.screen().root
             window_id = int(self.winId())
             window = d.create_resource_object('window', window_id)
 
-            # _NET_WM_WINDOW_TYPE_DOCK を設定
+            # _NET_WM_WINDOW_TYPE_DOCK (これが無いと最大化で無視される)
             type_atom = d.intern_atom('_NET_WM_WINDOW_TYPE')
             dock_atom = d.intern_atom('_NET_WM_WINDOW_TYPE_DOCK')
             window.change_property(type_atom, Xatom.ATOM, 32, [dock_atom])
 
-            # _NET_WM_STRUT_PARTIAL (左, 右, 上, 下, ...) 
-            # [0, 60, 0, 0, 0, 0, 0, screen_height, 0, 0, 0, 0]
+            # _NET_WM_STRUT_PARTIAL (右端 60px を予約)
+            strut_partial_atom = d.intern_atom('_NET_WM_STRUT_PARTIAL')
+            # 12個の数値: [L, R, T, B, L_start, L_end, R_start, R_end, T_start, T_end, B_start, B_end]
             struts = [0, self.taskbar_width, 0, 0, 0, 0, 0, self.screen_height, 0, 0, 0, 0]
-            strut_atom = d.intern_atom('_NET_WM_STRUT_PARTIAL')
-            window.change_property(strut_atom, Xatom.CARDINAL, 32, struts)
-            
+            window.change_property(strut_partial_atom, Xatom.CARDINAL, 32, struts)
+
+            # _NET_WM_STRUT (旧式マネージャ用)
+            strut_atom = d.intern_atom('_NET_WM_STRUT')
+            window.change_property(strut_atom, Xatom.CARDINAL, 32, struts[:4])
+
             d.sync()
         except Exception as e:
-            print(f"Strut error: {e}")
+            print(f"Reserve Error: {e}")
 
     def eventFilter(self, source, event):
         if source == self.scroll and event.type() == QtCore.QEvent.Wheel:
@@ -200,4 +204,6 @@ if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
     dm = AzontOS()
     dm.show()
+    # 起動直後に念押しで再実行
+    QtCore.QTimer.singleShot(500, dm.reserve_taskbar_area)
     sys.exit(app.exec_())
