@@ -17,7 +17,7 @@ class AzontOS(QtWidgets.QWidget):
         self.setWindowFlags(
             QtCore.Qt.FramelessWindowHint | 
             QtCore.Qt.WindowStaysOnTopHint |
-            QtCore.Qt.SubWindow # LinuxのWMで壁紙のように振る舞わせるため
+            QtCore.Qt.SubWindow
         )
 
         # 設定値
@@ -72,7 +72,7 @@ class AzontOS(QtWidgets.QWidget):
         self.scroll_content = QtWidgets.QWidget()
         self.drawer_layout = QtWidgets.QHBoxLayout(self.scroll_content)
         self.drawer_layout.setContentsMargins(20, 10, 20, 10)
-        self.drawer_layout.setSpacing(10)
+        self.drawer_layout.setSpacing(20) # 間隔を少し広めに
         self.scroll.setWidget(self.scroll_content)
 
         # アプリ読み込み
@@ -86,19 +86,11 @@ class AzontOS(QtWidgets.QWidget):
         layout.addWidget(self.scroll)
 
     def setup_wallpaper(self):
-        """Linux用の壁紙設定 (後で好きな画像パスに変更してください)"""
-        # とりあえずModern UIに合う深い色
         self.wallpaper_label.setStyleSheet("background-color: #000000;")
-        # 画像を使う場合はこちらをアンコメント
-        # pixmap = QtGui.QPixmap("/usr/share/backgrounds/azont_bg.jpg")
-        # self.wallpaper_label.setPixmap(pixmap.scaled(self.size(), QtCore.Qt.KeepAspectRatioByExpanding, QtCore.Qt.SmoothTransformation))
 
     def get_apps(self):
-        """Linuxの.desktopファイルをスキャンしてアプリを取得"""
         apps = []
-        # システムとユーザー両方のアプリディレクトリを確認
         search_paths = ["/usr/share/applications/*.desktop", os.path.expanduser("~/.local/share/applications/*.desktop")]
-        
         for path in search_paths:
             for desktop_file in glob.glob(path):
                 try:
@@ -114,33 +106,41 @@ class AzontOS(QtWidgets.QWidget):
                     pass
         return sorted(apps, key=lambda x: x['name'].lower())
 
-def populate_drawer(self):
-        # 既存のボタン作成処理をリニューアル
+    def populate_drawer(self):
+        """アプリタイルの生成 (アイコン画像 + 枠外ラベル)"""
         for app in self.apps:
             container = QtWidgets.QWidget()
             v_layout = QtWidgets.QVBoxLayout(container)
+            v_layout.setContentsMargins(0, 0, 0, 0)
+            v_layout.setSpacing(5)
             
             # アイコン部分 (正方形タイル)
             btn = QtWidgets.QToolButton()
             btn.setFixedSize(120, 120)
-            # アイコン画像の設定 (Papirusテーマなどから取得)
+            
+            # システムアイコンテーマから取得
             icon = QtGui.QIcon.fromTheme(app["icon"])
-            btn.setIcon(icon)
-            btn.setIconSize(QtCore.QSize(64, 64))
-            btn.setStyleSheet(f"background-color: {self.accent_color}; border: none;")
+            if icon.isNull(): # アイコンがない場合のフォールバック
+                btn.setText(app["name"][0])
+            else:
+                btn.setIcon(icon)
+                btn.setIconSize(QtCore.QSize(64, 64))
+            
+            btn.setStyleSheet(f"background-color: {self.accent_color}; border: none; color: white; font-size: 40px;")
             btn.clicked.connect(lambda _, a=app["exec"]: self.launch_app(a))
             
             # ラベル部分 (タイルの下)
-            label = QtWidgets.QLabel(app["name"][:12]) # 長すぎると崩れるので制限
+            label = QtWidgets.QLabel(app["name"])
+            label.setFixedWidth(120)
             label.setAlignment(QtCore.Qt.AlignCenter)
-            label.setStyleSheet("color: white; font-size: 10px; border: none;")
+            label.setStyleSheet("color: white; font-size: 11px; border: none;")
             
             v_layout.addWidget(btn)
             v_layout.addWidget(label)
             self.drawer_layout.addWidget(container)
-            # populate_drawerの最後にこれを追加
-            self.scroll_content.adjustSize()
-
+        
+        # すべて追加した後にサイズを確定させる
+        self.scroll_content.adjustSize()
 
     def populate_taskbar(self):
         y = 260
@@ -154,7 +154,6 @@ def populate_drawer(self):
     def toggle_drawer(self):
         is_open = self.drawer_panel.width() > 0
         target_width = self.width() - self.taskbar_width - 100 if not is_open else 0
-        
         self.animation = QtCore.QPropertyAnimation(self.drawer_panel, b"geometry")
         self.animation.setDuration(300)
         self.animation.setStartValue(self.drawer_panel.geometry())
@@ -168,20 +167,19 @@ def populate_drawer(self):
         self.animation.start()
 
     def launch_app(self, cmd):
-        # Linux用にコマンドをパースして実行
         try:
             subprocess.Popen(cmd.split())
         except:
             pass
 
     def shutdown(self):
+        # 開発中のためアプリ終了。本番は subprocess.Popen(["sudo", "poweroff"]) など
         QtWidgets.QApplication.quit()
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
+    # アイコンテーマを確実に読み込むための設定
+    app.setWindowIcon(QtGui.QIcon.fromTheme("system-run"))
     dm = AzontOS()
     dm.show()
-
     sys.exit(app.exec_())
-
-
