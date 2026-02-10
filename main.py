@@ -114,23 +114,30 @@ class AzontOS(QtWidgets.QWidget):
                     pass
         return sorted(apps, key=lambda x: x['name'].lower())
 
-    def populate_drawer(self):
+def populate_drawer(self):
+        # 既存のボタン作成処理をリニューアル
         for app in self.apps:
+            container = QtWidgets.QWidget()
+            v_layout = QtWidgets.QVBoxLayout(container)
+            
+            # アイコン部分 (正方形タイル)
             btn = QtWidgets.QToolButton()
-            btn.setText(app["name"])
-            btn.setFixedSize(140, 140)
-            btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextUnderIcon)
-            btn.setStyleSheet(f"""
-                QToolButton {{
-                    color: white;
-                    background-color: {self.accent_color};
-                    border: none;
-                    font-size: 11px;
-                }}
-                QToolButton:hover {{ background-color: rgba(255, 255, 255, 40); }}
-            """)
+            btn.setFixedSize(120, 120)
+            # アイコン画像の設定 (Papirusテーマなどから取得)
+            icon = QtGui.QIcon.fromTheme(app["icon"])
+            btn.setIcon(icon)
+            btn.setIconSize(QtCore.QSize(64, 64))
+            btn.setStyleSheet(f"background-color: {self.accent_color}; border: none;")
             btn.clicked.connect(lambda _, a=app["exec"]: self.launch_app(a))
-            self.drawer_layout.addWidget(btn)
+            
+            # ラベル部分 (タイルの下)
+            label = QtWidgets.QLabel(app["name"][:12]) # 長すぎると崩れるので制限
+            label.setAlignment(QtCore.Qt.AlignCenter)
+            label.setStyleSheet("color: white; font-size: 10px; border: none;")
+            
+            v_layout.addWidget(btn)
+            v_layout.addWidget(label)
+            self.drawer_layout.addWidget(container))
 
     def populate_taskbar(self):
         y = 260
@@ -171,4 +178,5 @@ if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
     dm = AzontOS()
     dm.show()
+
     sys.exit(app.exec_())
